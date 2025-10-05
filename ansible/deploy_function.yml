@@ -1,0 +1,54 @@
+---
+- name: Deploy Azure Function App Code
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    resource_group: "rg-note-taker-serverless"
+    function_app_name: "func-note-taker-app-987654" # Match Terraform name
+    source_path: "../backend"
+    
+  tasks:
+    - name: Create ZIP package of the Function App code
+      community.general.archive:
+        path: "{{ source_path }}"
+        dest: "/tmp/function-app-package.zip"
+        format: zip
+
+    - name: Deploy ZIP package to Azure Function App (WEBSITE_RUN_FROM_PACKAGE=1)
+      azure_rm_functionapp:
+        resource_group: "{{ resource_group }}"
+        name: "{{ function_app_name }}"
+        state: present
+        package_url: "/tmp/function-app-package.zip"
+        # Requires Azure authentication to be set up in the environment (e.g., az login)
+
+- name: Update CORS and Frontend URL in Function App settings
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    resource_group: "rg-note-taker-serverless"
+    function_app_name: "func-note-taker-app-987654"
+    static_web_app_name: "swa-note-taker-app"
+
+  tasks:
+    - name: Retrieve Static Web App default hostname from Azure
+      azure_rm_staticwebapp_info:
+        resource_group: "{{ resource_group }}"
+        name: "{{ static_web_app_name }}"
+      register: swa_info
+      
+    - name: Set CORS allowed origins to the Static Web App URL
+      # NOTE: This only works if the first hostname is the one you want
+      set_fact:
+        frontend_url: "https://{{ swa_info.static_web_apps[0].default_hostname }}"
+        
+    - name: Update Function App CORS setting with the Frontend URL
+      azure_rm_functionapp:
+        resource_group: "{{ resource_group }}"
+        name: "{{ function_app_name }}"
+        state: present
+        app_settings:
+          CORS_ALLOWED_ORIGINS: "{{ frontend_url }}"
+          # You might also want to set WEBSITE_CORS_ALLOWED_ORIGINS: "{{ frontend_url }}" for built-in CORS
